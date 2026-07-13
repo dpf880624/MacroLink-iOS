@@ -23,9 +23,7 @@ jobs:
 
       - name: Generate Xcode project
         run: |
-          cd ios/MacroLink
-          
-          # Create project.yml for XcodeGen
+          cd MacroLink
           cat > project.yml << 'EOF'
           name: MacroLink
           options:
@@ -56,14 +54,12 @@ jobs:
                   ONLY_ACTIVE_ARCH: NO
                   ENABLE_USER_SCRIPT_SANDBOXING: NO
           EOF
-          
           xcodegen generate
-          echo "--- Generated project ---"
           ls -la MacroLink.xcodeproj/
 
       - name: Build iOS app
         run: |
-          cd ios/MacroLink
+          cd MacroLink
           xcodebuild \
             -project MacroLink.xcodeproj \
             -scheme MacroLink \
@@ -78,7 +74,6 @@ jobs:
 
       - name: Create IPA
         run: |
-          cd ios
           APP_PATH=$(find build/DerivedData/Build/Products -name "MacroLink.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: MacroLink.app not found"
@@ -95,5 +90,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MacroLink-iOS
-          path: ios/build/MacroLink.ipa
+          path: build/MacroLink.ipa
           retention-days: 30
