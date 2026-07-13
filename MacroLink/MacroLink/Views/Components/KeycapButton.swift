@@ -20,7 +20,7 @@ struct Keycap3DView: UIViewRepresentable {
         guard let rootNode = view.scene?.rootNode,
               let keyNode = rootNode.childNode(withName: "keycap", recursively: true) else { return }
 
-        let targetY: CGFloat = isPressed ? -0.02 : 0.0
+        let targetY: Float = isPressed ? -0.02 : 0.0
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.08
         keyNode.position.y = targetY
