@@ -29,7 +29,7 @@ class WiFiServer: NSObject {
         guard !isRunning else { return }
         serverPort = port
 
-        serverSocket = socket(AF_INET, SOCK_STREAM, 0)
+        serverSocket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard serverSocket >= 0 else {
             onServerError?("Failed to create socket")
             return
@@ -43,7 +43,7 @@ class WiFiServer: NSObject {
         addr.sin_port = in_port_t(port).bigEndian
         addr.sin_addr.s_addr = INADDR_ANY.bigEndian
 
-        let bindResult = bind(serverSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+        let bindResult = Darwin.bind(serverSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
         guard bindResult >= 0 else {
             onServerError?("Bind failed")
             close(serverSocket)
@@ -51,7 +51,7 @@ class WiFiServer: NSObject {
             return
         }
 
-        let listenResult = listen(serverSocket, 1)
+        let listenResult = Darwin.listen(serverSocket, 1)
         guard listenResult >= 0 else {
             onServerError?("Listen failed")
             close(serverSocket)
@@ -71,7 +71,7 @@ class WiFiServer: NSObject {
         while isListening {
             var clientAddr = sockaddr_in()
             var clientAddrLen = socklen_t(MemoryLayout.size(ofValue: clientAddr))
-            let newClient = accept(serverSocket, sockaddr_cast(&clientAddr), &clientAddrLen)
+            let newClient = Darwin.accept(serverSocket, sockaddr_cast(&clientAddr), &clientAddrLen)
 
             guard newClient >= 0 else { continue }
 
@@ -96,7 +96,7 @@ class WiFiServer: NSObject {
     private func receiveLoop() {
         var buffer = [UInt8](repeating: 0, count: 65536)
         while isClientConnected {
-            let bytesRead = recv(clientSocket, &buffer, buffer.count, 0)
+                let bytesRead = Darwin.recv(clientSocket, &buffer, buffer.count, 0)
             if bytesRead > 0 {
                 let data = Data(bytes: buffer, count: bytesRead)
                 processReceivedData(data)
@@ -128,7 +128,7 @@ class WiFiServer: NSObject {
     func send(data: Data) {
         guard clientSocket >= 0, isClientConnected else { return }
         data.withUnsafeBytes { ptr in
-            send(clientSocket, ptr.baseAddress, data.count, 0)
+            Darwin.send(clientSocket, ptr.baseAddress, data.count, 0)
         }
     }
 

@@ -26,7 +26,7 @@ class WiFiConnection: NSObject {
     }
 
     func startDiscovery() {
-        udpSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        udpSocket = Darwin.socket(AF_INET, SOCK_DGRAM, 0)
         guard udpSocket >= 0 else { return }
 
         var broadcast: Int32 = 1
@@ -37,7 +37,7 @@ class WiFiConnection: NSObject {
         addr.sin_port = in_port_t(discoveryPort).bigEndian
         addr.sin_addr.s_addr = INADDR_ANY.bigEndian
 
-        if bind(udpSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr))) < 0 {
+        if Darwin.bind(udpSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr))) < 0 {
             close(udpSocket)
             udpSocket = -1
             return
@@ -67,7 +67,7 @@ class WiFiConnection: NSObject {
         addr.sin_addr.s_addr = in_addr_t(0xFFFFFFFF)
 
         data.withUnsafeBytes { ptr in
-            sendto(udpSocket, ptr.baseAddress, data.count, 0, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+            Darwin.sendto(udpSocket, ptr.baseAddress, data.count, 0, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
         }
     }
 
@@ -76,7 +76,7 @@ class WiFiConnection: NSObject {
         while udpSocket >= 0 {
             var senderAddr = sockaddr_in()
             var senderAddrLen = socklen_t(MemoryLayout.size(ofValue: senderAddr))
-            let bytesRead = recvfrom(udpSocket, &buffer, buffer.count, 0, sockaddr_cast(&senderAddr), &senderAddrLen)
+            let bytesRead = Darwin.recvfrom(udpSocket, &buffer, buffer.count, 0, sockaddr_cast(&senderAddr), &senderAddrLen)
 
             if bytesRead > 0 {
                 let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
@@ -104,7 +104,7 @@ class WiFiConnection: NSObject {
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self = self else { return }
 
-            self.tcpSocket = socket(AF_INET, SOCK_STREAM, 0)
+            self.tcpSocket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
             guard self.tcpSocket >= 0 else {
                 DispatchQueue.main.async { self.onConnectionStateChanged?(.error("Socket creation failed")) }
                 return
@@ -115,7 +115,7 @@ class WiFiConnection: NSObject {
             addr.sin_port = in_port_t(UInt16(device.port)).bigEndian
             inet_pton(AF_INET, device.ipAddress, &addr.sin_addr)
 
-            let result = connect(self.tcpSocket, self.sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+            let result = Darwin.connect(self.tcpSocket, self.sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
             if result >= 0 {
                 self.isConnected = true
                 DispatchQueue.main.async {
@@ -154,14 +154,14 @@ class WiFiConnection: NSObject {
     func sendRaw(data: Data) {
         guard tcpSocket >= 0 else { return }
         data.withUnsafeBytes { ptr in
-            send(tcpSocket, ptr.baseAddress, data.count, 0)
+            Darwin.send(tcpSocket, ptr.baseAddress, data.count, 0)
         }
     }
 
     private func receiveLoop() {
         var buffer = [UInt8](repeating: 0, count: 65536)
         while isConnected {
-            let bytesRead = recv(tcpSocket, &buffer, buffer.count, 0)
+            let bytesRead = Darwin.recv(tcpSocket, &buffer, buffer.count, 0)
             if bytesRead > 0 {
                 let data = Data(bytes: buffer, count: bytesRead)
                 processReceivedData(data)
