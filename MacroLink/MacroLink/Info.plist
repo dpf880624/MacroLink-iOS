@@ -6,33 +6,27 @@
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
     <string>MacroLink</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>com.phoneremote.keyboard.macrolink</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    <key>UILaunchStoryboardName</key>
-    <string>LaunchScreen</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>MacroLink 需要访问本地网络以连接到您的电脑进行远程控制</string>
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>black</string>
+    </dict>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationPortraitUpsideDown</string>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>MacroLink 需要访问本地网络以连接到您的电脑进行远程控制</string>
     <key>UIStatusBarStyle</key>
     <string>UIStatusBarStyleLightContent</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>

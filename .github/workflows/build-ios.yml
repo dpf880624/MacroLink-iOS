@@ -44,7 +44,7 @@ jobs:
                 base:
                   PRODUCT_BUNDLE_IDENTIFIER: com.phoneremote.keyboard.macrolink
                   INFOPLIST_FILE: MacroLink/Info.plist
-                  GENERATE_INFOPLIST_FILE: NO
+                  GENERATE_INFOPLIST_FILE: YES
                   ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
                   SWIFT_VERSION: "5.0"
                   CODE_SIGNING_ALLOWED: NO
