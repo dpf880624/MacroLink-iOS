@@ -1,11 +1,10 @@
 import Foundation
-import Network
 
 class WiFiConnection: NSObject {
     static let shared = WiFiConnection()
 
-    private var tcpClient: NWConnection?
-    private var udpSocket: NWConnection?
+    private var tcpSocket: Int32 = -1
+    private var udpSocket: Int32 = -1
     private var receiveBuffer = Data()
     private let maxBufferSize = 1024 * 1024
 
@@ -20,55 +19,68 @@ class WiFiConnection: NSObject {
 
     private var pingTimer: Timer?
     private let pingInterval: TimeInterval = 5.0
+    private var isConnected = false
 
     private override init() {
         super.init()
     }
 
-    // MARK: - Device Discovery
-
     func startDiscovery() {
-        let endpoint = NWEndpoint.hostPort(host: .ipv4(.broadcast), port: NWEndpoint.Port(rawValue: discoveryPort)!)
-        let params = NWParameters.udp
-        params.allowLocalEndpointReuse = true
-        udpSocket = NWConnection(to: endpoint, using: params)
+        udpSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        guard udpSocket >= 0 else { return }
 
-        udpSocket?.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                self?.sendDiscoveryBroadcast()
-                self?.startListeningForDiscoveryResponse()
-            case .failed(let error):
-                print("UDP discovery failed: \(error)")
-            default:
-                break
-            }
+        var broadcast: Int32 = 1
+        setsockopt(udpSocket, SOL_SOCKET, SO_BROADCAST, &broadcast, socklen_t(MemoryLayout.size(ofValue: broadcast)))
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(discoveryPort).bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY.bigEndian
+
+        if bind(udpSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr))) < 0 {
+            close(udpSocket)
+            udpSocket = -1
+            return
         }
-        udpSocket?.start(queue: .global())
+
+        sendDiscoveryBroadcast()
+
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            self?.listenForDiscoveryResponse()
+        }
     }
 
     func stopDiscovery() {
-        udpSocket?.cancel()
-        udpSocket = nil
+        if udpSocket >= 0 {
+            close(udpSocket)
+            udpSocket = -1
+        }
     }
 
     private func sendDiscoveryBroadcast() {
+        guard udpSocket >= 0 else { return }
         let data = discoveryMessage.data(using: .utf8)!
-        udpSocket?.send(content: data, completion: .contentProcessed { error in
-            if let error = error {
-                print("Discovery broadcast failed: \(error)")
-            }
-        })
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(discoveryPort).bigEndian
+        addr.sin_addr.s_addr = in_addr_t(0xFFFFFFFF)
+
+        data.withUnsafeBytes { ptr in
+            sendto(udpSocket, ptr.baseAddress, data.count, 0, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+        }
     }
 
-    private func startListeningForDiscoveryResponse() {
-        udpSocket?.receiveMessage { [weak self] data, context, isComplete, error in
-            guard let self = self else { return }
-            if let data = data, let response = String(data: data, encoding: .utf8) {
-                self.parseDiscoveryResponse(response)
-            }
-            if error == nil {
-                self.startListeningForDiscoveryResponse()
+    private func listenForDiscoveryResponse() {
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        while udpSocket >= 0 {
+            var senderAddr = sockaddr_in()
+            var senderAddrLen = socklen_t(MemoryLayout.size(ofValue: senderAddr))
+            let bytesRead = recvfrom(udpSocket, &buffer, buffer.count, 0, sockaddr_cast(&senderAddr), &senderAddrLen)
+
+            if bytesRead > 0 {
+                let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
+                parseDiscoveryResponse(response)
             }
         }
     }
@@ -82,58 +94,55 @@ class WiFiConnection: NSObject {
         guard let port = Int(String(parts[2])) else { return }
         let hostname = parts[3...].joined(separator: ":").trimmingCharacters(in: .whitespaces)
 
-        let device = Device(
-            id: "\(ip):\(port)",
-            name: hostname,
-            ipAddress: ip,
-            port: port,
-            connectionType: .wifi
-        )
-        onDeviceDiscovered?(device)
+        let device = Device(id: "\(ip):\(port)", name: hostname, ipAddress: ip, port: port, connectionType: .wifi)
+        DispatchQueue.main.async { self.onDeviceDiscovered?(device) }
     }
 
-    // MARK: - TCP Connection
-
     func connect(to device: Device) {
-        onConnectionStateChanged?(.connecting)
+        DispatchQueue.main.async { self.onConnectionStateChanged?(.connecting) }
 
-        let endpoint = NWEndpoint.hostPort(
-            host: .init(device.ipAddress),
-            port: NWEndpoint.Port(rawValue: UInt16(device.port))!
-        )
-        let params = NWParameters.tcp
-        tcpClient = NWConnection(to: endpoint, using: params)
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self = self else { return }
 
-        tcpClient?.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                self?.onConnectionStateChanged?(.connected)
-                self?.startPingTimer()
-                self?.receiveData()
-            case .failed(let error):
-                self?.onConnectionStateChanged?(.error(error.localizedDescription))
-                self?.stopPingTimer()
-            case .waiting(let error):
-                self?.onConnectionStateChanged?(.error(error.localizedDescription))
-            default:
-                break
+            self.tcpSocket = socket(AF_INET, SOCK_STREAM, 0)
+            guard self.tcpSocket >= 0 else {
+                DispatchQueue.main.async { self.onConnectionStateChanged?(.error("Socket creation failed")) }
+                return
+            }
+
+            var addr = sockaddr_in()
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = in_port_t(UInt16(device.port)).bigEndian
+            inet_pton(AF_INET, device.ipAddress, &addr.sin_addr)
+
+            let result = connect(self.tcpSocket, self.sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+            if result >= 0 {
+                self.isConnected = true
+                DispatchQueue.main.async {
+                    self.onConnectionStateChanged?(.connected)
+                    self.startPingTimer()
+                }
+                self.receiveLoop()
+            } else {
+                close(self.tcpSocket)
+                self.tcpSocket = -1
+                DispatchQueue.main.async { self.onConnectionStateChanged?(.error("Connection failed")) }
             }
         }
-        tcpClient?.start(queue: .global())
     }
 
     func disconnect() {
         stopPingTimer()
-        tcpClient?.cancel()
-        tcpClient = nil
+        isConnected = false
+        if tcpSocket >= 0 {
+            close(tcpSocket)
+            tcpSocket = -1
+        }
         receiveBuffer.removeAll()
         onConnectionStateChanged?(.disconnected)
     }
 
-    // MARK: - Send Data
-
     func send(command: Command) {
-        guard let tcpClient = tcpClient else { return }
         do {
             let jsonData = try JSONEncoder().encode(command)
             sendRaw(data: jsonData)
@@ -143,35 +152,24 @@ class WiFiConnection: NSObject {
     }
 
     func sendRaw(data: Data) {
-        guard let tcpClient = tcpClient else { return }
-        tcpClient.send(content: data, completion: .contentProcessed { error in
-            if let error = error {
-                print("Send failed: \(error)")
-            }
-        })
+        guard tcpSocket >= 0 else { return }
+        data.withUnsafeBytes { ptr in
+            send(tcpSocket, ptr.baseAddress, data.count, 0)
+        }
     }
 
-    // MARK: - Receive Data
-
-    private func receiveData() {
-        tcpClient?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, context, isComplete, error in
-            guard let self = self else { return }
-
-            if let data = data, !data.isEmpty {
-                self.processReceivedData(data)
+    private func receiveLoop() {
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        while isConnected {
+            let bytesRead = recv(tcpSocket, &buffer, buffer.count, 0)
+            if bytesRead > 0 {
+                let data = Data(bytes: buffer, count: bytesRead)
+                processReceivedData(data)
+            } else {
+                isConnected = false
+                DispatchQueue.main.async { self.onConnectionStateChanged?(.disconnected) }
+                break
             }
-
-            if let error = error {
-                print("Receive error: \(error)")
-                return
-            }
-
-            if isComplete {
-                self.onConnectionStateChanged?(.disconnected)
-                return
-            }
-
-            self.receiveData()
         }
     }
 
@@ -185,13 +183,12 @@ class WiFiConnection: NSObject {
         while let jsonEndIndex = findCompleteJSON() {
             let jsonData = receiveBuffer.subdata(in: 0..<jsonEndIndex)
             receiveBuffer = receiveBuffer.subdata(in: jsonEndIndex..<receiveBuffer.count)
-            onDataReceived?(jsonData)
+            DispatchQueue.main.async { self.onDataReceived?(jsonData) }
         }
     }
 
     private func findCompleteJSON() -> Int? {
         guard !receiveBuffer.isEmpty else { return nil }
-
         var depth = 0
         var inString = false
         var escape = false
@@ -199,49 +196,33 @@ class WiFiConnection: NSObject {
 
         for i in 0..<receiveBuffer.count {
             let byte = receiveBuffer[i]
-
-            if escape {
-                escape = false
-                continue
-            }
-
-            if byte == UInt8(ascii: "\\") && inString {
-                escape = true
-                continue
-            }
-
-            if byte == UInt8(ascii: "\"") {
-                inString = !inString
-                continue
-            }
-
+            if escape { escape = false; continue }
+            if byte == UInt8(ascii: "\\") && inString { escape = true; continue }
+            if byte == UInt8(ascii: "\"") { inString = !inString; continue }
             if inString { continue }
-
-            if byte == UInt8(ascii: "{") {
-                if depth == 0 { startIndex = i }
-                depth += 1
-            } else if byte == UInt8(ascii: "}") {
-                depth -= 1
-                if depth == 0, let start = startIndex {
-                    return i + 1
-                }
-            }
+            if byte == UInt8(ascii: "{") { if depth == 0 { startIndex = i }; depth += 1 }
+            else if byte == UInt8(ascii: "}") { depth -= 1; if depth == 0, let start = startIndex { return i + 1 } }
         }
-
         return nil
     }
 
-    // MARK: - Ping
-
     private func startPingTimer() {
         stopPingTimer()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { [weak self] _ in
-            self?.send(command: .ping())
+        DispatchQueue.main.async { [weak self] in
+            self?.pingTimer = Timer.scheduledTimer(withTimeInterval: self?.pingInterval ?? 5.0, repeats: true) { [weak self] _ in
+                self?.send(command: .ping())
+            }
         }
     }
 
     private func stopPingTimer() {
-        pingTimer?.invalidate()
-        pingTimer = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.pingTimer?.invalidate()
+            self?.pingTimer = nil
+        }
+    }
+
+    private func sockaddr_cast(_ ptr: UnsafeMutablePointer<sockaddr_in>) -> UnsafeMutablePointer<sockaddr> {
+        return UnsafeMutableRawPointer(ptr).bindMemory(to: sockaddr.self, capacity: 1)
     }
 }

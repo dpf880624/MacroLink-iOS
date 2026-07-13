@@ -29,7 +29,7 @@ jobs:
           options:
             bundleIdPrefix: com.phoneremote.keyboard
             deploymentTarget:
-              iOS: "16.0"
+              iOS: "12.0"
             generateEmptyDirectories: true
 
           targets:
@@ -37,7 +37,7 @@ jobs:
               type: application
               platform: iOS
               deploymentTarget:
-                iOS: "16.0"
+                iOS: "12.0"
               sources:
                 - path: MacroLink
               settings:
@@ -54,6 +54,7 @@ jobs:
                   TARGETED_DEVICE_FAMILY: "1,2"
                   ONLY_ACTIVE_ARCH: NO
                   ENABLE_USER_SCRIPT_SANDBOXING: NO
+                  IPHONEOS_DEPLOYMENT_TARGET: "12.0"
           EOF
           xcodegen generate
           sed -i '' 's/objectVersion = 77/objectVersion = 56/' MacroLink.xcodeproj/project.pbxproj

@@ -1,14 +1,13 @@
 import Foundation
-import Combine
 
-class TouchpadViewModel: ObservableObject {
+class TouchpadViewModel {
     private let connectionManager = ConnectionManager.shared
 
-    @Published var sensitivity: Float = 1.0
-    @Published var scrollSensitivity: Float = 1.0
-    @Published var isLeftButtonDown: Bool = false
-    @Published var isRightButtonDown: Bool = false
-    @Published var isMiddleButtonDown: Bool = false
+    var sensitivity: Float = 1.0
+    var scrollSensitivity: Float = 1.0
+    var isLeftButtonDown: Bool = false
+    var isRightButtonDown: Bool = false
+    var isMiddleButtonDown: Bool = false
 
     func handleMove(dx: CGFloat, dy: CGFloat) {
         let scaledX = Int(dx * CGFloat(sensitivity))

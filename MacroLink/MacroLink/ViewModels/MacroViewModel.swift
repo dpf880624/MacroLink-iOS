@@ -1,22 +1,17 @@
 import Foundation
-import Combine
 
-class MacroViewModel: ObservableObject {
+class MacroViewModel {
     private let connectionManager = ConnectionManager.shared
 
-    @Published var macros: [Macro] = []
-    @Published var isRecording: Bool = false
-    @Published var isPlaying: Bool = false
-    @Published var currentPlayingMacro: Macro? = nil
-    @Published var executedLoops: Int = 0
-
-    private var playCancellable: AnyCancellable? = nil
+    var macros: [Macro] = []
+    var isRecording: Bool = false
+    var isPlaying: Bool = false
+    var currentPlayingMacro: Macro? = nil
+    var executedLoops: Int = 0
 
     init() {
         loadMacros()
     }
-
-    // MARK: - CRUD
 
     func addMacro(_ macro: Macro) {
         macros.append(macro)
@@ -43,8 +38,6 @@ class MacroViewModel: ObservableObject {
             saveMacros()
         }
     }
-
-    // MARK: - Play Macro
 
     func playMacro(_ macro: Macro) {
         guard connectionManager.connectionState.isConnected else { return }
@@ -98,11 +91,7 @@ class MacroViewModel: ObservableObject {
         switch action.type {
         case .keyboard:
             if let keyCode = action.keyCode {
-                let command = Command.keyboard(
-                    action: .press,
-                    keyCode: keyCode,
-                    modifiers: action.modifiers
-                )
+                let command = Command.keyboard(action: .press, keyCode: keyCode, modifiers: action.modifiers)
                 connectionManager.sendCommand(command)
             }
         case .mouseClick:
@@ -121,19 +110,10 @@ class MacroViewModel: ObservableObject {
     }
 
     private func sendMacroMarker(_ marker: String, name: String, actionCount: Int, loopCount: Int, executedLoops: Int = 0, cancelled: Bool = false) {
-        let payload = MacroPayload(
-            marker: marker,
-            name: name,
-            actionCount: actionCount,
-            loopCount: loopCount,
-            executedLoops: executedLoops,
-            cancelled: cancelled
-        )
+        let payload = MacroPayload(marker: marker, name: name, actionCount: actionCount, loopCount: loopCount, executedLoops: executedLoops, cancelled: cancelled)
         let command = Command(type: .macro, payload: AnyCodable(payload))
         connectionManager.sendCommand(command)
     }
-
-    // MARK: - Recording
 
     func startRecording() {
         guard connectionManager.connectionState.isConnected else { return }
@@ -149,8 +129,6 @@ class MacroViewModel: ObservableObject {
         let command = Command(type: .macrorecord, payload: AnyCodable(payload))
         connectionManager.sendCommand(command)
     }
-
-    // MARK: - Persistence
 
     private func saveMacros() {
         do {
@@ -168,11 +146,5 @@ class MacroViewModel: ObservableObject {
         } catch {
             print("Failed to load macros: \(error)")
         }
-    }
-}
-
-extension DispatchQueue {
-    func asyncAfter(deadline: DispatchTime, qos: DispatchQoS = .unspecified, execute work: @escaping () -> Void) {
-        asyncAfter(deadline: deadline, qos: qos, flags: [], execute: work)
     }
 }

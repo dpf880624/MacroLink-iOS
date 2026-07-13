@@ -1,20 +1,18 @@
 import Foundation
-import Combine
 
-class ConnectionManager: ObservableObject {
+class ConnectionManager {
     static let shared = ConnectionManager()
 
-    @Published var connectionState: ConnectionState = .disconnected
-    @Published var connectedDevice: Device? = nil
-    @Published var discoveredDevices: [Device] = []
+    var connectionState: ConnectionState = .disconnected
+    var connectedDevice: Device? = nil
+    var discoveredDevices: [Device] = []
 
-    @Published var wifiServerRunning: Bool = false
-    @Published var wifiServerClientConnected: Bool = false
-    @Published var wifiServerIP: String? = nil
+    var wifiServerRunning: Bool = false
+    var wifiServerClientConnected: Bool = false
+    var wifiServerIP: String? = nil
 
     private let wifiConnection = WiFiConnection.shared
     private let wifiServer = WiFiServer.shared
-    private var cancellables = Set<AnyCancellable>()
 
     private init() {
         setupCallbacks()
@@ -28,12 +26,14 @@ class ConnectionManager: ObservableObject {
                 if !self.discoveredDevices.contains(where: { $0.id == device.id }) {
                     self.discoveredDevices.append(device)
                 }
+                self.notifyStateChanged()
             }
         }
 
         wifiConnection.onConnectionStateChanged = { [weak self] state in
             DispatchQueue.main.async {
                 self?.connectionState = state
+                self?.notifyStateChanged()
             }
         }
 
@@ -48,6 +48,7 @@ class ConnectionManager: ObservableObject {
                 self?.wifiServerClientConnected = true
                 self?.connectionState = .connected
                 self?.wifiServerIP = self?.wifiServer.getLocalIPAddress()
+                self?.notifyStateChanged()
             }
         }
 
@@ -57,6 +58,7 @@ class ConnectionManager: ObservableObject {
                 if self?.wifiServerRunning == true {
                     self?.connectionState = .disconnected
                 }
+                self?.notifyStateChanged()
             }
         }
 
@@ -67,15 +69,19 @@ class ConnectionManager: ObservableObject {
         wifiServer.onServerError = { [weak self] errorMsg in
             DispatchQueue.main.async {
                 self?.connectionState = .error(errorMsg)
+                self?.notifyStateChanged()
             }
         }
     }
 
-    // MARK: - Public API (Client Mode)
+    private func notifyStateChanged() {
+        NotificationCenter.default.post(name: Notification.Name("ConnectionStateChanged"), object: nil)
+    }
 
     func startScan() {
         discoveredDevices.removeAll()
         connectionState = .scanning
+        notifyStateChanged()
         wifiConnection.startDiscovery()
     }
 
@@ -84,6 +90,7 @@ class ConnectionManager: ObservableObject {
         if !connectionState.isConnected {
             connectionState = .disconnected
         }
+        notifyStateChanged()
     }
 
     func connect(to device: Device) {
@@ -95,6 +102,7 @@ class ConnectionManager: ObservableObject {
         wifiConnection.disconnect()
         connectedDevice = nil
         connectionState = .disconnected
+        notifyStateChanged()
     }
 
     func sendCommand(_ command: Command) {
@@ -113,13 +121,12 @@ class ConnectionManager: ObservableObject {
         }
     }
 
-    // MARK: - Public API (Server Mode)
-
     func startWiFiServer(port: UInt16 = Constants.defaultDataPort) {
         wifiServer.start(port: port)
         wifiServerRunning = true
         wifiServerIP = wifiServer.getLocalIPAddress()
         connectionState = .disconnected
+        notifyStateChanged()
     }
 
     func stopWiFiServer() {
@@ -128,9 +135,8 @@ class ConnectionManager: ObservableObject {
         wifiServerClientConnected = false
         wifiServerIP = nil
         connectionState = .disconnected
+        notifyStateChanged()
     }
-
-    // MARK: - Data Handling
 
     private func handleReceivedData(_ data: Data) {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -138,36 +144,18 @@ class ConnectionManager: ObservableObject {
 
         switch type {
         case "pc_status":
-            handlePCStatus(json)
+            NotificationCenter.default.post(name: .pcStatusUpdate, object: nil, userInfo: json)
         case "window_change":
-            handleWindowChange(json)
+            NotificationCenter.default.post(name: .windowChange, object: nil, userInfo: json)
         case "keycapture_result":
-            handleKeyCaptureResult(json)
+            NotificationCenter.default.post(name: .keyCaptureResult, object: nil, userInfo: json)
         case "macrorecord_result":
-            handleMacroRecordResult(json)
+            NotificationCenter.default.post(name: .macroRecordResult, object: nil, userInfo: json)
         default:
             break
         }
     }
-
-    private func handlePCStatus(_ json: [String: Any]) {
-        NotificationCenter.default.post(name: .pcStatusUpdate, object: nil, userInfo: json)
-    }
-
-    private func handleWindowChange(_ json: [String: Any]) {
-        NotificationCenter.default.post(name: .windowChange, object: nil, userInfo: json)
-    }
-
-    private func handleKeyCaptureResult(_ json: [String: Any]) {
-        NotificationCenter.default.post(name: .keyCaptureResult, object: nil, userInfo: json)
-    }
-
-    private func handleMacroRecordResult(_ json: [String: Any]) {
-        NotificationCenter.default.post(name: .macroRecordResult, object: nil, userInfo: json)
-    }
 }
-
-// MARK: - Notification Names
 
 extension Notification.Name {
     static let pcStatusUpdate = Notification.Name("pcStatusUpdate")

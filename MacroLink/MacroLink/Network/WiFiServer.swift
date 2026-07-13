@@ -1,13 +1,13 @@
 import Foundation
-import Network
 
-class WiFiServer {
+class WiFiServer: NSObject {
     static let shared = WiFiServer()
 
-    private var listener: NWListener?
-    private var clientConnection: NWConnection?
+    private var serverSocket: Int32 = -1
+    private var clientSocket: Int32 = -1
     private var receiveBuffer = Data()
     private let maxBufferSize = Constants.maxReceiveBuffer
+    private var isListening = false
 
     private(set) var isRunning = false
     private(set) var isClientConnected = false
@@ -21,118 +21,115 @@ class WiFiServer {
     private var pingTimer: Timer?
     private let pingInterval = Constants.pingInterval
 
-    private init() {}
-
-    // MARK: - Server Lifecycle
+    private override init() {
+        super.init()
+    }
 
     func start(port: UInt16 = Constants.defaultDataPort) {
         guard !isRunning else { return }
-
-        let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            onServerError?("Invalid port: \(port)")
-            return
-        }
-
-        do {
-            listener = try NWListener(using: params, on: nwPort)
-        } catch {
-            onServerError?("Failed to create listener: \(error.localizedDescription)")
-            return
-        }
-
         serverPort = port
 
-        listener?.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                self?.isRunning = true
-                print("WiFi Server started on port \(port)")
-            case .failed(let error):
-                self?.isRunning = false
-                self?.onServerError?("Listener failed: \(error.localizedDescription)")
-            default:
+        serverSocket = socket(AF_INET, SOCK_STREAM, 0)
+        guard serverSocket >= 0 else {
+            onServerError?("Failed to create socket")
+            return
+        }
+
+        var reuse: Int32 = 1
+        setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout.size(ofValue: reuse)))
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(port).bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY.bigEndian
+
+        let bindResult = bind(serverSocket, sockaddr_cast(&addr), socklen_t(MemoryLayout.size(ofValue: addr)))
+        guard bindResult >= 0 else {
+            onServerError?("Bind failed")
+            close(serverSocket)
+            serverSocket = -1
+            return
+        }
+
+        let listenResult = listen(serverSocket, 1)
+        guard listenResult >= 0 else {
+            onServerError?("Listen failed")
+            close(serverSocket)
+            serverSocket = -1
+            return
+        }
+
+        isRunning = true
+        isListening = true
+
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            self?.acceptLoop()
+        }
+    }
+
+    private func acceptLoop() {
+        while isListening {
+            var clientAddr = sockaddr_in()
+            var clientAddrLen = socklen_t(MemoryLayout.size(ofValue: clientAddr))
+            let newClient = accept(serverSocket, sockaddr_cast(&clientAddr), &clientAddrLen)
+
+            guard newClient >= 0 else { continue }
+
+            if clientSocket >= 0 {
+                close(clientSocket)
+                isClientConnected = false
+                DispatchQueue.main.async { self.onClientDisconnected?() }
+            }
+
+            clientSocket = newClient
+            isClientConnected = true
+
+            DispatchQueue.main.async { [weak self] in
+                self?.onClientConnected?()
+                self?.startPingTimer()
+            }
+
+            receiveLoop()
+        }
+    }
+
+    private func receiveLoop() {
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        while isClientConnected {
+            let bytesRead = recv(clientSocket, &buffer, buffer.count, 0)
+            if bytesRead > 0 {
+                let data = Data(bytes: buffer, count: bytesRead)
+                processReceivedData(data)
+            } else {
+                handleClientDisconnect()
                 break
             }
         }
-
-        listener?.newConnectionHandler = { [weak self] connection in
-            self?.handleNewConnection(connection)
-        }
-
-        listener?.start(queue: .global())
     }
 
     func stop() {
-        clientConnection?.cancel()
-        clientConnection = nil
-        isClientConnected = false
-
-        listener?.cancel()
-        listener = nil
+        isListening = false
         isRunning = false
 
-        stopPingTimer()
-        receiveBuffer.removeAll()
-
-        print("WiFi Server stopped")
-    }
-
-    // MARK: - Client Connection Handling
-
-    private func handleNewConnection(_ connection: NWConnection) {
-        if isClientConnected {
-            clientConnection?.cancel()
-            isClientConnected = false
-            onClientDisconnected?()
+        if clientSocket >= 0 {
+            close(clientSocket)
+            clientSocket = -1
+        }
+        if serverSocket >= 0 {
+            close(serverSocket)
+            serverSocket = -1
         }
 
-        clientConnection = connection
-
-        connection.stateUpdateHandler = { [weak self] state in
-            guard let self = self else { return }
-            switch state {
-            case .ready:
-                self.isClientConnected = true
-                self.onClientConnected?()
-                self.startPingTimer()
-                self.receiveFromClient()
-                print("PC client connected: \(connection.endpoint)")
-            case .failed(let error):
-                self.handleClientDisconnect()
-                self.onServerError?("Client connection failed: \(error.localizedDescription)")
-            case .cancelled:
-                self.handleClientDisconnect()
-            default:
-                break
-            }
-        }
-
-        connection.start(queue: .global())
-    }
-
-    private func handleClientDisconnect() {
-        guard isClientConnected else { return }
         isClientConnected = false
-        clientConnection = nil
         stopPingTimer()
         receiveBuffer.removeAll()
-        onClientDisconnected?()
-        print("PC client disconnected")
     }
-
-    // MARK: - Send Data
 
     func send(data: Data) {
-        guard let clientConnection = clientConnection, isClientConnected else { return }
-        clientConnection.send(content: data, completion: .contentProcessed { [weak self] error in
-            if let error = error {
-                print("WiFi Server send error: \(error.localizedDescription)")
-                self?.handleClientDisconnect()
-            }
-        })
+        guard clientSocket >= 0, isClientConnected else { return }
+        data.withUnsafeBytes { ptr in
+            send(clientSocket, ptr.baseAddress, data.count, 0)
+        }
     }
 
     func send(command: Command) {
@@ -144,31 +141,16 @@ class WiFiServer {
         }
     }
 
-    // MARK: - Receive Data
-
-    private func receiveFromClient() {
-        clientConnection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, context, isComplete, error in
-            guard let self = self else { return }
-
-            if let data = data, !data.isEmpty {
-                self.processReceivedData(data)
-            }
-
-            if let error = error {
-                print("WiFi Server receive error: \(error.localizedDescription)")
-                self.handleClientDisconnect()
-                return
-            }
-
-            if isComplete {
-                self.handleClientDisconnect()
-                return
-            }
-
-            if self.isClientConnected {
-                self.receiveFromClient()
-            }
+    private func handleClientDisconnect() {
+        guard isClientConnected else { return }
+        isClientConnected = false
+        if clientSocket >= 0 {
+            close(clientSocket)
+            clientSocket = -1
         }
+        stopPingTimer()
+        receiveBuffer.removeAll()
+        DispatchQueue.main.async { self.onClientDisconnected?() }
     }
 
     private func processReceivedData(_ data: Data) {
@@ -181,13 +163,12 @@ class WiFiServer {
         while let jsonEndIndex = findCompleteJSON() {
             let jsonData = receiveBuffer.subdata(in: 0..<jsonEndIndex)
             receiveBuffer = receiveBuffer.subdata(in: jsonEndIndex..<receiveBuffer.count)
-            onDataReceived?(jsonData)
+            DispatchQueue.main.async { self.onDataReceived?(jsonData) }
         }
     }
 
     private func findCompleteJSON() -> Int? {
         guard !receiveBuffer.isEmpty else { return nil }
-
         var depth = 0
         var inString = false
         var escape = false
@@ -195,53 +176,31 @@ class WiFiServer {
 
         for i in 0..<receiveBuffer.count {
             let byte = receiveBuffer[i]
-
-            if escape {
-                escape = false
-                continue
-            }
-
-            if byte == UInt8(ascii: "\\") && inString {
-                escape = true
-                continue
-            }
-
-            if byte == UInt8(ascii: "\"") {
-                inString = !inString
-                continue
-            }
-
+            if escape { escape = false; continue }
+            if byte == UInt8(ascii: "\\") && inString { escape = true; continue }
+            if byte == UInt8(ascii: "\"") { inString = !inString; continue }
             if inString { continue }
-
-            if byte == UInt8(ascii: "{") {
-                if depth == 0 { startIndex = i }
-                depth += 1
-            } else if byte == UInt8(ascii: "}") {
-                depth -= 1
-                if depth == 0, let start = startIndex {
-                    return i + 1
-                }
-            }
+            if byte == UInt8(ascii: "{") { if depth == 0 { startIndex = i }; depth += 1 }
+            else if byte == UInt8(ascii: "}") { depth -= 1; if depth == 0, let start = startIndex { return i + 1 } }
         }
-
         return nil
     }
 
-    // MARK: - Ping
-
     private func startPingTimer() {
         stopPingTimer()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { [weak self] _ in
-            self?.send(command: .ping())
+        DispatchQueue.main.async { [weak self] in
+            self?.pingTimer = Timer.scheduledTimer(withTimeInterval: self?.pingInterval ?? 5.0, repeats: true) { [weak self] _ in
+                self?.send(command: .ping())
+            }
         }
     }
 
     private func stopPingTimer() {
-        pingTimer?.invalidate()
-        pingTimer = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.pingTimer?.invalidate()
+            self?.pingTimer = nil
+        }
     }
-
-    // MARK: - Local IP
 
     func getLocalIPAddress() -> String? {
         var address: String?
@@ -268,5 +227,9 @@ class WiFiServer {
 
         freeifaddrs(ifaddr)
         return address
+    }
+
+    private func sockaddr_cast(_ ptr: UnsafeMutablePointer<sockaddr_in>) -> UnsafeMutablePointer<sockaddr> {
+        return UnsafeMutableRawPointer(ptr).bindMemory(to: sockaddr.self, capacity: 1)
     }
 }

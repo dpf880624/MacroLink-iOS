@@ -1,7 +1,6 @@
 import Foundation
-import Combine
 
-class KeyboardViewModel: ObservableObject {
+class KeyboardViewModel {
     private let connectionManager = ConnectionManager.shared
 
     func sendKeyPress(keyCode: Int, modifiers: [String] = []) {
@@ -30,7 +29,7 @@ class KeyboardViewModel: ObservableObject {
     }
 }
 
-struct KeyDefinition: Identifiable {
+struct KeyDefinition {
     let id: String
     let label: String
     let keyCode: Int
