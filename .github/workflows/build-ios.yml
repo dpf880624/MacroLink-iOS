@@ -60,6 +60,7 @@ jobs:
       - name: Build iOS app
         run: |
           cd MacroLink
+          set -o pipefail
           xcodebuild \
             -project MacroLink.xcodeproj \
             -scheme MacroLink \
@@ -70,14 +71,19 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            build 2>&1 | tail -50
+            build | xcbeautify || true
+          
+          echo "=== Build result ==="
+          find ../build/DerivedData -name "*.app" -type d 2>/dev/null || echo "No .app found"
+          echo "=== Products dir ==="
+          ls -la ../build/DerivedData/Build/Products/ 2>/dev/null || echo "No Products dir"
 
       - name: Create IPA
         run: |
-          APP_PATH=$(find build/DerivedData/Build/Products -name "MacroLink.app" -type d | head -1)
+          APP_PATH=$(find build/DerivedData -name "MacroLink.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: MacroLink.app not found"
-            find build/DerivedData -name "*.app" -type d 2>/dev/null || true
+            find build/DerivedData -type d -maxdepth 5 2>/dev/null || true
             exit 1
           fi
           echo "Found: $APP_PATH"
