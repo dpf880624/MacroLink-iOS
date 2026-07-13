@@ -31,6 +31,7 @@ jobs:
             deploymentTarget:
               iOS: "16.0"
             generateEmptyDirectories: true
+
           targets:
             MacroLink:
               type: application
@@ -55,6 +56,7 @@ jobs:
                   ENABLE_USER_SCRIPT_SANDBOXING: NO
           EOF
           xcodegen generate
+          sed -i '' 's/objectVersion = 77/objectVersion = 56/' MacroLink.xcodeproj/project.pbxproj
           ls -la MacroLink.xcodeproj/
 
       - name: Build iOS app
