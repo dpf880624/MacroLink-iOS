@@ -12,8 +12,8 @@ class WiFiConnection: NSObject {
     var onDataReceived: ((Data) -> Void)?
     var onConnectionStateChanged: ((ConnectionState) -> Void)?
 
-    private let discoveryPort: UInt16 = 8889
-    private let dataPort: UInt16 = 8888
+    private let discoveryPort: UInt16 = 9899
+    private let dataPort: UInt16 = 9898
     private let discoveryMessage = "PHONE_REMOTE_KEYBOARD_DISCOVERY"
     private let serverResponsePrefix = "PHONE_REMOTE_KEYBOARD_SERVER"
 

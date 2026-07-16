@@ -85,7 +85,7 @@ class ConnectionViewController: UIViewController, UITableViewDataSource, UITable
         manualCard.addSubview(manualTitle)
 
         ipTextField = createTextField("IP 地址")
-        portTextField = createTextField("8888")
+        portTextField = createTextField(UserDefaults.standard.string(forKey: "manual_port") ?? "9898")
         portTextField.widthAnchor.constraint(equalToConstant: 70).isActive = true
         portTextField.keyboardType = .numberPad
         ipTextField.keyboardType = .decimalPad
@@ -119,7 +119,7 @@ class ConnectionViewController: UIViewController, UITableViewDataSource, UITable
         serverTitle.translatesAutoresizingMaskIntoConstraints = false
         serverCard.addSubview(serverTitle)
 
-        serverPortTextField = createTextField("8888")
+        serverPortTextField = createTextField(UserDefaults.standard.string(forKey: "server_port") ?? "9898")
         serverPortTextField.keyboardType = .numberPad
         serverPortTextField.widthAnchor.constraint(equalToConstant: 70).isActive = true
 
@@ -260,12 +260,15 @@ class ConnectionViewController: UIViewController, UITableViewDataSource, UITable
 
     @objc private func manualConnect() {
         guard let ip = ipTextField.text, !ip.isEmpty, let portStr = portTextField.text, let port = Int(portStr) else { return }
+        UserDefaults.standard.set(portStr, forKey: "manual_port")
         let device = Device(id: "\(ip):\(port)", name: ip, ipAddress: ip, port: port, connectionType: .wifi)
         connectionManager.connect(to: device)
     }
 
     @objc private func startServer() {
-        let port = UInt16(serverPortTextField.text ?? "8888") ?? Constants.defaultDataPort
+        let portStr = serverPortTextField.text ?? "9898"
+        let port = UInt16(portStr) ?? Constants.defaultDataPort
+        UserDefaults.standard.set(portStr, forKey: "server_port")
         connectionManager.startWiFiServer(port: port)
         refreshUI()
     }

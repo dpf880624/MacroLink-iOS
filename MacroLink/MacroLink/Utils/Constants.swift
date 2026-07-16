@@ -1,8 +1,8 @@
 import Foundation
 
 struct Constants {
-    static let defaultDataPort: UInt16 = 8888
-    static let defaultDiscoveryPort: UInt16 = 8889
+    static let defaultDataPort: UInt16 = 9898
+    static let defaultDiscoveryPort: UInt16 = 9899
     static let discoveryMessage = "PHONE_REMOTE_KEYBOARD_DISCOVERY"
     static let serverResponsePrefix = "PHONE_REMOTE_KEYBOARD_SERVER"
     static let pingInterval: TimeInterval = 5.0
